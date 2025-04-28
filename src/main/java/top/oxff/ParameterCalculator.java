@@ -1,5 +1,6 @@
 package top.oxff;
 
+import burp.BurpExtender;
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpRequestResponse;
 import burp.IRequestInfo;
@@ -10,6 +11,7 @@ import top.oxff.utils.JsonParameterProcessor;
 import top.oxff.utils.MultipartFormDataProcessor;
 import top.oxff.utils.XmlParameterProcessor;
 
+import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -27,6 +29,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class ParameterCalculator {
 
     private final IBurpExtenderCallbacks callbacks;
+    private final PrintWriter stdout;
+    private final PrintWriter stderr;
     // 线程池，用于并行处理请求
     private ExecutorService threadPool;
     // 批处理大小
@@ -36,6 +40,8 @@ public class ParameterCalculator {
 
     public ParameterCalculator(IBurpExtenderCallbacks callbacks) {
         this.callbacks = callbacks;
+        this.stdout = BurpExtender.getStdout();
+        this.stderr = BurpExtender.getStderr();
         initThreadPool();
     }
     
@@ -48,7 +54,7 @@ public class ParameterCalculator {
         int threadCount = Math.min(processors * 2, 16);
         this.threadPool = Executors.newFixedThreadPool(threadCount);
         if (LOG_LEVEL <= 1) {
-            callbacks.printOutput("创建线程池，线程数: " + threadCount);
+            stdout.println("创建线程池，线程数: " + threadCount);
         }
     }
 
@@ -58,7 +64,7 @@ public class ParameterCalculator {
      */
     public void processRequests(IHttpRequestResponse[] httpRequestResponses) {
         if (httpRequestResponses == null || httpRequestResponses.length == 0) {
-            callbacks.printOutput("没有请求");
+            stdout.println("没有请求");
             return;
         }
         
@@ -73,7 +79,7 @@ public class ParameterCalculator {
         
         // 记录开始时间
         long startTime = System.currentTimeMillis();
-        callbacks.printOutput("开始处理 " + httpRequestResponses.length + " 个请求...");
+        stdout.println("开始处理 " + httpRequestResponses.length + " 个请求...");
         
         // 分批处理请求
         for (int batchStart = 0; batchStart < httpRequestResponses.length; batchStart += BATCH_SIZE) {
@@ -81,7 +87,7 @@ public class ParameterCalculator {
             int batchSize = batchEnd - batchStart;
             
             if (LOG_LEVEL <= 1) {
-                callbacks.printOutput("处理批次 " + (batchStart / BATCH_SIZE + 1) + 
+                stdout.println("处理批次 " + (batchStart / BATCH_SIZE + 1) + 
                       "，范围: " + (batchStart + 1) + "-" + batchEnd + 
                       "，共 " + batchSize + " 个请求");
             }
@@ -104,11 +110,16 @@ public class ParameterCalculator {
                         int processed = processedCount.get();
                         if (processed % 50 == 0 || processed == httpRequestResponses.length) {
                             double percent = (double) processed / httpRequestResponses.length * 100;
-                            callbacks.printOutput(String.format("进度: %.1f%% (%d/%d)", 
-                                percent, processed, httpRequestResponses.length));
+                            final String progressMsg = String.format("进度: %.1f%% (%d/%d)", 
+                                percent, processed, httpRequestResponses.length);
+                            synchronized (stdout) {
+                                stdout.println(progressMsg);
+                            }
                         }
                     } catch (Exception e) {
-                        callbacks.printError("处理请求时发生错误: " + e.getMessage());
+                        synchronized (stderr) {
+                            stderr.println("处理请求时发生错误: " + e.getMessage());
+                        }
                     } finally {
                         batchLatch.countDown();
                     }
@@ -119,10 +130,10 @@ public class ParameterCalculator {
                 // 等待当前批次完成，最多等待30秒
                 boolean completed = batchLatch.await(30, TimeUnit.SECONDS);
                 if (!completed) {
-                    callbacks.printError("批次处理超时，继续下一批");
+                    stderr.println("批次处理超时，继续下一批");
                 }
             } catch (InterruptedException e) {
-                callbacks.printError("等待批次完成时被中断: " + e.getMessage());
+                stderr.println("等待批次完成时被中断: " + e.getMessage());
                 Thread.currentThread().interrupt();
             }
             
@@ -139,7 +150,7 @@ public class ParameterCalculator {
         double timeInSeconds = (endTime - startTime) / 1000.0;
         
         // 汇总处理结果
-        callbacks.printOutput("处理完成! 共处理了 " + processedCount.get() + " 个请求，成功 " + 
+        stdout.println("处理完成! 共处理了 " + processedCount.get() + " 个请求，成功 " + 
                 successCount.get() + " 个，耗时: " + timeInSeconds + " 秒");
     }
     
@@ -171,7 +182,9 @@ public class ParameterCalculator {
     private boolean processRequest(IHttpRequestResponse requestResponse, int index, int total) {
         if (requestResponse == null) {
             if (LOG_LEVEL <= 1) {
-                callbacks.printOutput("请求为空 [" + (index + 1) + "/" + total + "]");
+                synchronized (stdout) {
+                    stdout.println("请求为空 [" + (index + 1) + "/" + total + "]");
+                }
             }
             return false;
         }
@@ -181,7 +194,9 @@ public class ParameterCalculator {
         // 跳过null请求
         if (requestBytes == null || requestBytes.length == 0) {
             if (LOG_LEVEL <= 1) {
-                callbacks.printOutput("请求为空 [" + (index + 1) + "/" + total + "]");
+                synchronized (stdout) {
+                    stdout.println("请求为空 [" + (index + 1) + "/" + total + "]");
+                }
             }
             return false;
         }
@@ -192,14 +207,18 @@ public class ParameterCalculator {
             requestInfo = callbacks.getHelpers().analyzeRequest(requestResponse);
         } catch (Exception e) {
             if (LOG_LEVEL <= 1) {
-                callbacks.printError("无法分析请求 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                synchronized (stderr) {
+                    stderr.println("无法分析请求 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                }
             }
             return false;
         }
 
         if (requestInfo == null) {
             if (LOG_LEVEL <= 1) {
-                callbacks.printOutput("请求为空 [" + (index + 1) + "/" + total + "]");
+                synchronized (stdout) {
+                    stdout.println("请求为空 [" + (index + 1) + "/" + total + "]");
+                }
             }
             return false;
         }
@@ -221,7 +240,9 @@ public class ParameterCalculator {
                 
                 if (bodyBytes.length == 0) {
                     if (LOG_LEVEL <= 1) {
-                        callbacks.printOutput("请求体为空 [" + (index + 1) + "/" + total + "]");
+                        synchronized (stdout) {
+                            stdout.println("请求体为空 [" + (index + 1) + "/" + total + "]");
+                        }
                     }
                     return false;
                 }
@@ -230,14 +251,18 @@ public class ParameterCalculator {
             }
         } catch (Exception e) {
             if (LOG_LEVEL <= 1) {
-                callbacks.printError("无法计算参数数量 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                synchronized (stderr) {
+                    stderr.println("无法计算参数数量 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                }
             }
             return false;
         }
 
         if (counts == null) {
             if (LOG_LEVEL <= 1) {
-                callbacks.printOutput("无法计算参数数量 [" + (index + 1) + "/" + total + "]");
+                synchronized (stdout) {
+                    stdout.println("无法计算参数数量 [" + (index + 1) + "/" + total + "]");
+                }
             }
             return false;
         }
@@ -251,19 +276,21 @@ public class ParameterCalculator {
             requestResponse.setComment(comment);
         } catch (Exception e) {
             if (LOG_LEVEL <= 1) {
-                callbacks.printError("无法更新请求备注 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                synchronized (stderr) {
+                    stderr.println("无法更新请求备注 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                }
             }
             return false;
         }
 
         // 仅在详细日志级别输出详细信息
         if (LOG_LEVEL == 0) {
-            synchronized (callbacks) {
-                callbacks.printOutput("------------------------------");
-                callbacks.printOutput("URL: " + requestInfo.getUrl().toString());
-                callbacks.printOutput("方法: " + method);
-                callbacks.printOutput(comment);
-                callbacks.printOutput("------------------------------");
+            synchronized (stdout) {
+                stdout.println("------------------------------");
+                stdout.println("URL: " + requestInfo.getUrl().toString());
+                stdout.println("方法: " + method);
+                stdout.println(comment);
+                stdout.println("------------------------------");
             }
         }
             
