@@ -37,14 +37,18 @@ public class CalculationParameters implements IContextMenuFactory {
             IHttpRequestResponse[] selectedMessages = invocation.getSelectedMessages();
             
             if (selectedMessages == null || selectedMessages.length == 0) {
-                // 如果用户没有选择任何请求，则处理所有历史记录
-                IHttpRequestResponse[] allHistory = callbacks.getProxyHistory();
-                calculator.processRequests(allHistory);
-                callbacks.printOutput("已处理所有历史请求，共 " + allHistory.length + " 个请求");
+                SwingUtilities.invokeLater(() -> {
+                    // 如果用户没有选择任何请求，则处理所有历史记录
+                    IHttpRequestResponse[] allHistory = callbacks.getProxyHistory();
+                    calculator.processRequests(allHistory);
+                    callbacks.printOutput("已处理所有历史请求，共 " + allHistory.length + " 个请求");
+                });
             } else {
-                // 否则只处理选中的请求
-                calculator.processRequests(selectedMessages);
-                callbacks.printOutput("已处理选中的请求，共 " + selectedMessages.length + " 个请求");
+               SwingUtilities.invokeLater(() -> {
+                   // 否则只处理选中的请求
+                   calculator.processRequests(selectedMessages);
+                   callbacks.printOutput("已处理选中的请求，共 " + selectedMessages.length + " 个请求");
+               });
             }
         });
         

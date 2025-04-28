@@ -1,5 +1,8 @@
 package top.oxff.utils;
 
+import com.alibaba.fastjson.JSON;
+import com.alibaba.fastjson.JSONArray;
+import com.alibaba.fastjson.JSONObject;
 import top.oxff.ParameterCounts;
 
 /**
@@ -13,81 +16,96 @@ public class JsonParameterProcessor {
      * @return 参数计数结果
      */
     public static ParameterCounts calculateJsonParameters(String jsonBody) {
-        int totalCount;
-        int valuedCount;
-        
-        if (jsonBody.trim().isEmpty()) {
+        if (jsonBody == null || jsonBody.trim().isEmpty()) {
             return new ParameterCounts(0, 0);
         }
         
-        // 计数键值对
-        totalCount = countJSONKeyValuePairs(jsonBody);
-        
-        // 计数非空值
-        valuedCount = countJSONNonEmptyValues(jsonBody);
-        
-        return new ParameterCounts(totalCount, valuedCount);
+        try {
+            // 使用fastjson解析
+            Object jsonObj = JSON.parse(jsonBody);
+            
+            // 递归计算参数
+            ParameterCounter counter = new ParameterCounter();
+            countParameters(jsonObj, counter);
+            
+            return new ParameterCounts(counter.totalCount, counter.valuedCount);
+        } catch (Exception e) {
+            // 解析失败时返回默认值
+            return new ParameterCounts(0, 0);
+        }
     }
     
     /**
-     * 计算JSON中键值对的数量
-     * @param jsonBody JSON字符串
-     * @return 键值对数量
+     * 递归计算JSON参数数量
+     * @param jsonObj JSON对象
+     * @param counter 计数器
      */
-    private static int countJSONKeyValuePairs(String jsonBody) {
-        // 简单计数JSON中的键值对数量
-        // 计算 "key": 模式的出现次数
-        int count = 0;
-        int index = 0;
-        
-        while ((index = jsonBody.indexOf("\":", index)) != -1) {
-            count++;
-            index += 2;
+    private static void countParameters(Object jsonObj, ParameterCounter counter) {
+        if (jsonObj == null) {
+            return;
         }
         
-        return count;
-    }
-    
-    /**
-     * 计算JSON中非空值的数量
-     * @param jsonBody JSON字符串
-     * @return 非空值数量
-     */
-    private static int countJSONNonEmptyValues(String jsonBody) {
-        // 简单计数JSON中非空值的数量
-        // 这里我们假设非空值是不等于 null, "", [], {} 的值
-        int count = 0;
-        int index = 0;
-        
-        while ((index = jsonBody.indexOf("\":", index)) != -1) {
-            index += 2;
+        if (jsonObj instanceof JSONObject) {
+            JSONObject jsonObject = (JSONObject) jsonObj;
             
-            // 跳过空白字符
-            while (index < jsonBody.length() && Character.isWhitespace(jsonBody.charAt(index))) {
-                index++;
-            }
-            
-            if (index < jsonBody.length()) {
-                char nextChar = jsonBody.charAt(index);
+            for (String key : jsonObject.keySet()) {
+                Object value = jsonObject.get(key);
+                counter.totalCount++;
                 
-                // 检查是否是空值
-                if (nextChar == 'n' && index + 4 <= jsonBody.length() && jsonBody.substring(index, index + 4).equals("null")) {
-                    // 空值，不计数
-                } else if (nextChar == '\"' && index + 2 <= jsonBody.length() && jsonBody.charAt(index + 1) == '\"') {
-                    // 空字符串，不计数
-                } else if (nextChar == '[' && index + 2 <= jsonBody.length() && jsonBody.charAt(index + 1) == ']') {
-                    // 空数组，不计数
-                } else if (nextChar == '{' && index + 2 <= jsonBody.length() && jsonBody.charAt(index + 1) == '}') {
-                    // 空对象，不计数
-                } else {
-                    // 非空值，计数加一
-                    count++;
+                if (isValuedParameter(value)) {
+                    counter.valuedCount++;
+                }
+                
+                // 递归处理嵌套对象
+                if (value instanceof JSONObject || value instanceof JSONArray) {
+                    countParameters(value, counter);
                 }
             }
+        } else if (jsonObj instanceof JSONArray) {
+            JSONArray jsonArray = (JSONArray) jsonObj;
             
-            index++;
+            for (int i = 0; i < jsonArray.size(); i++) {
+                Object item = jsonArray.get(i);
+                
+                // 递归处理数组项
+                if (item instanceof JSONObject || item instanceof JSONArray) {
+                    countParameters(item, counter);
+                }
+            }
+        }
+    }
+    
+    /**
+     * 判断参数是否有值
+     * @param value 参数值
+     * @return 是否有值
+     */
+    private static boolean isValuedParameter(Object value) {
+        if (value == null) {
+            return false;
         }
         
-        return count;
+        if (value instanceof String) {
+            return !((String) value).isEmpty();
+        }
+        
+        if (value instanceof JSONArray) {
+            return !((JSONArray) value).isEmpty();
+        }
+        
+        if (value instanceof JSONObject) {
+            return !((JSONObject) value).isEmpty();
+        }
+        
+        // 数字、布尔等其他类型视为有值
+        return true;
+    }
+    
+    /**
+     * 参数计数器
+     */
+    private static class ParameterCounter {
+        int totalCount = 0;
+        int valuedCount = 0;
     }
 } 

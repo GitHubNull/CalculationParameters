@@ -1,8 +1,13 @@
 package top.oxff.utils;
 
+import org.dom4j.Document;
+import org.dom4j.DocumentException;
+import org.dom4j.DocumentHelper;
+import org.dom4j.Element;
+import org.dom4j.Node;
 import top.oxff.ParameterCounts;
 
-import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 
 /**
@@ -16,79 +21,74 @@ public class XmlParameterProcessor {
      * @return 参数计数结果
      */
     public static ParameterCounts calculateXmlParameters(String xmlBody) {
-        int totalCount;
-        int valuedCount = 0;
-        
-        if (xmlBody.trim().isEmpty()) {
+        if (xmlBody == null || xmlBody.trim().isEmpty()) {
             return new ParameterCounts(0, 0);
         }
         
-        // 计数XML标签数量
-        List<String> tags = extractXmlTags(xmlBody);
-        totalCount = tags.size();
-        
-        // 计数非空XML标签数量
-        for (String tag : tags) {
-            if (!tag.isEmpty()) {
-                valuedCount++;
-            }
+        try {
+            // 使用DOM4J解析XML
+            Document document = DocumentHelper.parseText(xmlBody);
+            Element rootElement = document.getRootElement();
+            
+            // 递归计算参数
+            ParameterCounter counter = new ParameterCounter();
+            processElement(rootElement, counter);
+            
+            return new ParameterCounts(counter.totalCount, counter.valuedCount);
+        } catch (DocumentException e) {
+            // 解析失败时返回默认值
+            return new ParameterCounts(0, 0);
         }
-        
-        return new ParameterCounts(totalCount, valuedCount);
-    }
-
-    /**
-     * 提取XML标签及其内容
-     * @param xmlBody XML字符串
-     * @return 标签内容列表
-     */
-    private static List<String> extractXmlTags(String xmlBody) {
-        List<String> tags = new ArrayList<>();
-        int startIndex = 0;
-        
-        while (startIndex < xmlBody.length()) {
-            int openTagStart = xmlBody.indexOf("<", startIndex);
-            if (openTagStart == -1) break;
-            
-            int openTagEnd = xmlBody.indexOf(">", openTagStart);
-            if (openTagEnd == -1) break;
-            
-            String tagName = extractTagName(xmlBody.substring(openTagStart + 1, openTagEnd));
-            
-            // 检查是否是自闭合标签
-            if (xmlBody.charAt(openTagEnd - 1) == '/' || tagName.startsWith("?")) {
-                startIndex = openTagEnd + 1;
-                continue;
-            }
-            
-            // 查找对应的关闭标签
-            String closeTag = "</" + tagName + ">";
-            int closeTagStart = xmlBody.indexOf(closeTag, openTagEnd);
-            
-            if (closeTagStart != -1) {
-                // 提取标签内容
-                String content = xmlBody.substring(openTagEnd + 1, closeTagStart).trim();
-                tags.add(content);
-                startIndex = closeTagStart + closeTag.length();
-            } else {
-                startIndex = openTagEnd + 1;
-            }
-        }
-        
-        return tags;
     }
     
     /**
-     * 提取标签名
-     * @param tag 标签字符串
-     * @return 标签名
+     * 递归处理XML元素
+     * @param element XML元素
+     * @param counter 计数器
      */
-    private static String extractTagName(String tag) {
-        // 从标签中提取标签名
-        int spaceIndex = tag.indexOf(" ");
-        if (spaceIndex != -1) {
-            return tag.substring(0, spaceIndex);
+    private static void processElement(Element element, ParameterCounter counter) {
+        // 处理属性
+        for (Iterator<org.dom4j.Attribute> it = element.attributeIterator(); it.hasNext();) {
+            org.dom4j.Attribute attribute = it.next();
+            counter.totalCount++;
+            
+            // 属性非空视为有值
+            if (attribute.getValue() != null && !attribute.getValue().trim().isEmpty()) {
+                counter.valuedCount++;
+            }
         }
-        return tag;
+        
+        // 处理子元素
+        List<Node> nodes = element.content();
+        boolean hasValuedContent = false;
+        
+        for (Node node : nodes) {
+            if (node instanceof Element) {
+                // 子元素递归处理
+                processElement((Element) node, counter);
+            } else if (node.getNodeType() == Node.TEXT_NODE) {
+                // 文本节点非空视为有值
+                String text = node.getText().trim();
+                if (!text.isEmpty()) {
+                    hasValuedContent = true;
+                }
+            }
+        }
+        
+        // 如果元素没有子元素但有属性，则视为一个参数
+        if (element.elements().isEmpty()) {
+            counter.totalCount++;
+            if (hasValuedContent) {
+                counter.valuedCount++;
+            }
+        }
+    }
+    
+    /**
+     * 参数计数器
+     */
+    private static class ParameterCounter {
+        int totalCount = 0;
+        int valuedCount = 0;
     }
 } 
