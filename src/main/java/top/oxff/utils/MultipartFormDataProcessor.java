@@ -2,43 +2,80 @@ package top.oxff.utils;
 
 import top.oxff.ParameterCounts;
 
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 处理multipart/form-data格式参数的处理器
+ * 处理multipart/form-data格式请求的处理器
  */
 public class MultipartFormDataProcessor {
-
+    // 分隔符常量
+    private static final byte[] CRLF = new byte[] {'\r', '\n'};
+    private static final byte[] DOUBLE_CRLF = new byte[] {'\r', '\n', '\r', '\n'};
+    private static final String CONTENT_DISPOSITION = "Content-Disposition:";
+    private static final String FORM_DATA = "form-data";
+    private static final String FILENAME = "filename";
+    
     /**
-     * 计算multipart/form-data参数数量
-     * @param bodyString multipart/form-data格式的请求体字符串
-     * @param contentType 请求的Content-Type头
+     * 计算multipart/form-data格式请求中的参数数量
+     * @param bodyBytes 请求体字节数组
+     * @param contentType Content-Type头值
      * @return 参数计数结果
      */
-    public static ParameterCounts calculateMultipartParameters(String bodyString, String contentType) {
+    public static ParameterCounts calculateMultipartParameters(byte[] bodyBytes, String contentType) {
+        try {
+            // 从Content-Type中提取boundary
+            String boundary = extractBoundary(contentType);
+            if (boundary == null || bodyBytes == null) {
+                return new ParameterCounts(0, 0);
+            }
+            
+            return calculateMultipartParametersByBytes(bodyBytes, boundary);
+        } catch (Exception e) {
+            // 发生异常时返回默认值
+            return new ParameterCounts(0, 0);
+        }
+    }
+    
+    /**
+     * 使用字节数组方式计算multipart/form-data格式请求中的参数数量
+     * @param bodyBytes 请求体字节数组
+     * @param boundary 分隔符
+     * @return 参数计数结果
+     */
+    private static ParameterCounts calculateMultipartParametersByBytes(byte[] bodyBytes, String boundary) {
+        byte[] boundaryBytes = ("--" + boundary).getBytes();
+        List<MultipartPart> parts = findParts(bodyBytes, boundaryBytes);
+        
         int totalCount = 0;
         int valuedCount = 0;
         
-        if (bodyString.trim().isEmpty()) {
-            return new ParameterCounts(0, 0);
-        }
-        
-        // 从Content-Type中提取boundary
-        String boundary = extractBoundary(contentType);
-        if (boundary == null) {
-            return new ParameterCounts(0, 0);
-        }
-        
-        // 解析各个部分
-        List<String> parts = splitByBoundary(bodyString, boundary);
-        totalCount = parts.size();
-        
-        // 分析每个部分是否有值
-        for (String part : parts) {
-            if (hasValue(part)) {
+        for (MultipartPart part : parts) {
+            totalCount++;
+
+            // 提取部分头信息
+            byte[] headerBytes = Arrays.copyOfRange(bodyBytes, part.getHeaderStart(), part.getHeaderEnd());
+            String headers = new String(headerBytes, StandardCharsets.UTF_8);
+
+            // 只处理form-data部分
+            if (!headers.contains(FORM_DATA)) {
+                continue;
+            }
+
+            // 检查内容是否为空
+            byte[] contentBytes = Arrays.copyOfRange(bodyBytes, part.getContentStart(), part.getContentEnd());
+            boolean isEmpty = contentBytes.length == 0;
+
+            // 检查是否为文件上传
+            boolean isFile = headers.contains(FILENAME);
+
+            // 文件上传或非空内容计为有值参数
+            if (isFile || !isEmpty) {
                 valuedCount++;
             }
         }
@@ -47,17 +84,18 @@ public class MultipartFormDataProcessor {
     }
     
     /**
-     * 从Content-Type头中提取boundary值
-     * @param contentType Content-Type头的值
-     * @return boundary字符串，如果未找到则返回null
+     * 从Content-Type中提取boundary
+     * @param contentType Content-Type头值
+     * @return boundary字符串
      */
     private static String extractBoundary(String contentType) {
-        if (contentType == null) {
+        if (contentType == null || !contentType.contains("multipart/form-data")) {
             return null;
         }
         
-        Pattern pattern = Pattern.compile("boundary=([^;\\s]+)");
+        Pattern pattern = Pattern.compile("boundary=(.+?)($|;|\\s)");
         Matcher matcher = pattern.matcher(contentType);
+        
         if (matcher.find()) {
             return matcher.group(1);
         }
@@ -66,147 +104,85 @@ public class MultipartFormDataProcessor {
     }
     
     /**
-     * 按boundary分割请求体
-     * @param bodyString 请求体字符串
-     * @param boundary boundary字符串
-     * @return 分割后的部分列表
+     * 在字节数组中查找所有部分
+     * @param data 请求体字节数组
+     * @param boundary 分隔符字节数组
+     * @return 部分列表
      */
-    private static List<String> splitByBoundary(String bodyString, String boundary) {
-        List<String> result = new ArrayList<>();
+    private static List<MultipartPart> findParts(byte[] data, byte[] boundary) {
+        List<MultipartPart> parts = new ArrayList<>();
+        List<Integer> boundaryPositions = findAllOccurrences(data, boundary);
         
-        // 完整的boundary标记应该是"--{boundary}"
-        String boundaryMarker = "--" + boundary;
-        
-        // 按boundary分割
-        String[] parts = bodyString.split(Pattern.quote(boundaryMarker));
-        
-        // 第一部分通常是空的，最后一部分通常是结束分隔符，所以我们跳过它们
-        for (int i = 1; i < parts.length; i++) {
-            String part = parts[i];
-            // 跳过结束分隔符
-            if (part.trim().equals("--")) {
-                continue;
-            }
-            // 去除开头的\r\n
-            if (part.startsWith("\r\n")) {
-                part = part.substring(2);
-            }
-            // 去除结尾的\r\n
-            if (part.endsWith("\r\n")) {
-                part = part.substring(0, part.length() - 2);
+        for (int i = 0; i < boundaryPositions.size() - 1; i++) {
+            int start = boundaryPositions.get(i) + boundary.length;
+            int end = boundaryPositions.get(i + 1);
+            
+            // 跳过CRLF
+            if (start < data.length && data[start] == '\r' && start + 1 < data.length && data[start + 1] == '\n') {
+                start += 2;
             }
             
-            if (!part.trim().isEmpty()) {
-                result.add(part);
+            // 查找头部和内容分隔位置
+            int headerEnd = findSequence(data, DOUBLE_CRLF, start, end);
+            if (headerEnd != -1) {
+                int contentStart = headerEnd + DOUBLE_CRLF.length;
+                int contentEnd = end;
+                
+                // 跳过内容末尾的CRLF（如果有）
+                if (contentEnd > 2 && data[contentEnd - 2] == '\r' && data[contentEnd - 1] == '\n') {
+                    contentEnd -= 2;
+                }
+                
+                parts.add(new MultipartPart(start, headerEnd, contentStart, contentEnd));
             }
         }
         
-        return result;
+        return parts;
     }
     
     /**
-     * 判断部分是否有值
-     * @param part 部分字符串
-     * @return 如果有值则返回true
+     * 查找字节序列在数据中的位置
+     * @param data 数据字节数组
+     * @param sequence 要查找的序列
+     * @param start 开始位置
+     * @param end 结束位置
+     * @return 找到的位置或-1
      */
-    private static boolean hasValue(String part) {
-        // 分离头部和内容
-        String[] headerAndContent = part.split("\r\n\r\n", 2);
+    private static int findSequence(byte[] data, byte[] sequence, int start, int end) {
+        end = Math.min(end, data.length);
         
-        // 如果没有内容，则认为无值
-        if (headerAndContent.length < 2) {
-            return false;
-        }
-        
-        String headers = headerAndContent[0];
-        String content = headerAndContent[1];
-        
-        // 检查是否是文件上传
-        if (isFileUpload(headers)) {
-            // 对于文件上传，检查Content-Transfer-Encoding
-            String transferEncoding = extractContentTransferEncoding(headers);
-            
-            // 检查是否有文件名
-            boolean hasFilename = hasFilename(headers);
-            
-            // 如果是base64或binary编码，只需检查是否有文件名和内容长度大于0
-            if ("base64".equalsIgnoreCase(transferEncoding) || "binary".equalsIgnoreCase(transferEncoding)) {
-                return hasFilename && content.length() > 0;
+        outer:
+        for (int i = start; i <= end - sequence.length; i++) {
+            for (int j = 0; j < sequence.length; j++) {
+                if (data[i + j] != sequence[j]) {
+                    continue outer;
+                }
             }
-            
-            // 对于其他编码类型或没有指定编码类型，检查是否有文件名和内容是否为空
-            return hasFilename && !content.trim().isEmpty();
+            return i;
         }
         
-        // 对于普通表单字段，如果内容不为空，则认为有值
-        return !content.trim().isEmpty();
+        return -1;
     }
     
     /**
-     * 判断是否是文件上传
-     * @param headers 部分的HTTP头
-     * @return 如果是文件上传则返回true
+     * 查找所有指定字节序列的位置
+     * @param data 数据字节数组
+     * @param sequence 要查找的序列
+     * @return 位置列表
      */
-    private static boolean isFileUpload(String headers) {
-        // 检查是否包含Content-Type头（文件上传通常会有）
-        if (headers.contains("Content-Type:")) {
-            return true;
+    private static List<Integer> findAllOccurrences(byte[] data, byte[] sequence) {
+        List<Integer> positions = new ArrayList<>();
+        
+        outer:
+        for (int i = 0; i <= data.length - sequence.length; i++) {
+            for (int j = 0; j < sequence.length; j++) {
+                if (data[i + j] != sequence[j]) {
+                    continue outer;
+                }
+            }
+            positions.add(i);
         }
         
-        // 检查是否在Content-Disposition中包含filename属性
-        return hasFilename(headers);
-    }
-    
-    /**
-     * 判断是否包含filename属性
-     * @param headers 部分的HTTP头
-     * @return 如果包含filename属性则返回true
-     */
-    private static boolean hasFilename(String headers) {
-        Pattern pattern = Pattern.compile("filename=\"([^\"]*)\"");
-        Matcher matcher = pattern.matcher(headers);
-        return matcher.find();
-    }
-    
-    /**
-     * 提取Content-Transfer-Encoding的值
-     * @param headers 部分的HTTP头
-     * @return Content-Transfer-Encoding的值，如果未找到则返回null
-     */
-    private static String extractContentTransferEncoding(String headers) {
-        Pattern pattern = Pattern.compile("Content-Transfer-Encoding:\\s*([^\\r\\n]+)", Pattern.CASE_INSENSITIVE);
-        Matcher matcher = pattern.matcher(headers);
-        if (matcher.find()) {
-            return matcher.group(1).trim();
-        }
-        return null;
-    }
-    
-    /**
-     * 从Content-Disposition中提取name值
-     * @param headers 部分的HTTP头
-     * @return name的值，如果未找到则返回null
-     */
-    private static String extractFieldName(String headers) {
-        Pattern pattern = Pattern.compile("name=\"([^\"]+)\"");
-        Matcher matcher = pattern.matcher(headers);
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
-        return null;
-    }
-    
-    /**
-     * 从Content-Disposition中提取filename值
-     * @param headers 部分的HTTP头
-     * @return filename的值，如果未找到则返回null
-     */
-    private static String extractFilename(String headers) {
-        Pattern pattern = Pattern.compile("filename=\"([^\"]*)\"");
-        Matcher matcher = pattern.matcher(headers);
-        if (matcher.find()) {
-            return matcher.group(1);
-        }
-        return null;
+        return positions;
     }
 } 

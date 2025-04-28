@@ -16,7 +16,7 @@ public class XmlParameterProcessor {
      * @return 参数计数结果
      */
     public static ParameterCounts calculateXmlParameters(String xmlBody) {
-        int totalCount = 0;
+        int totalCount;
         int valuedCount = 0;
         
         if (xmlBody.trim().isEmpty()) {

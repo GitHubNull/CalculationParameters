@@ -4,7 +4,6 @@ import burp.IContextMenuFactory;
 import burp.IContextMenuInvocation;
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpRequestResponse;
-import burp.IRequestInfo;
 
 import javax.swing.*;
 import java.util.ArrayList;

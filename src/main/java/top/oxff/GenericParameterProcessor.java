@@ -5,6 +5,8 @@ import top.oxff.utils.JsonParameterProcessor;
 import top.oxff.utils.MultipartFormDataProcessor;
 import top.oxff.utils.XmlParameterProcessor;
 
+import java.nio.charset.StandardCharsets;
+
 /**
  * 处理通用格式参数的处理器
  */
@@ -12,11 +14,21 @@ public class GenericParameterProcessor {
     
     /**
      * 计算通用参数数量
-     * @param bodyString 请求体字符串
+     * @param bodyBytes 请求体字符串
      * @return 参数计数结果
      */
-    public static ParameterCounts calculateGenericParameters(String bodyString) {
-        int totalCount = 0;
+    public static ParameterCounts calculateGenericParameters(byte[] bodyBytes) {
+
+        String bodyString;
+
+        try {
+            bodyString = new String(bodyBytes, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return new ParameterCounts(0, 0);
+        }
+
+
+        int totalCount;
         int valuedCount = 0;
         
         if (bodyString.trim().isEmpty()) {
@@ -36,12 +48,15 @@ public class GenericParameterProcessor {
         } else if (bodyString.contains("Content-Disposition: form-data") && bodyString.contains("--")) {
             // 可能是multipart/form-data格式，需要模拟一个Content-Type头
             String fakeContentType = "multipart/form-data; boundary=---------------------------";
-            return MultipartFormDataProcessor.calculateMultipartParameters(bodyString, fakeContentType);
+            try {
+                return MultipartFormDataProcessor.calculateMultipartParameters(bodyBytes, fakeContentType);
+            } catch (Exception e) {
+                return new ParameterCounts(0, 0);
+            }
         }
         
         // 如果无法确定格式，尝试按照通用方式计数
-        int equalsCount = countOccurrences(bodyString, "=");
-        totalCount = equalsCount;
+        totalCount = countOccurrences(bodyString, "=");
         
         // 估计已赋值的参数数
         for (int i = 0; i < bodyString.length(); i++) {

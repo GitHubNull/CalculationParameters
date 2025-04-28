@@ -3,13 +3,13 @@ package top.oxff;
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpRequestResponse;
 import burp.IRequestInfo;
-import burp.IParameter;
 
 import top.oxff.utils.FormParameterProcessor;
 import top.oxff.utils.JsonParameterProcessor;
 import top.oxff.utils.MultipartFormDataProcessor;
 import top.oxff.utils.XmlParameterProcessor;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -40,16 +40,19 @@ public class ParameterCalculator {
         
         for (IHttpRequestResponse requestResponse : httpRequestResponses) {
             if (requestResponse == null){
+                callbacks.printOutput("请求为空");
                 continue;
             }
+
             byte[] requestBytes = requestResponse.getRequest();
             
             // 跳过null请求
             if (requestBytes == null || requestBytes.length == 0) {
+                callbacks.printOutput("请求为空");
                 continue;
             }
 
-            IRequestInfo requestInfo = null;
+            IRequestInfo requestInfo;
 
             try {
                 requestInfo = callbacks.getHelpers().analyzeRequest(requestResponse);
@@ -59,12 +62,14 @@ public class ParameterCalculator {
             }
 
             if (requestInfo == null){
+                callbacks.printOutput("请求为空");
                 continue;
             }
 
             // 获取请求方法
             String method = requestInfo.getMethod();
             if (method.equals("GET") || method.equals("HEAD") || method.equals("OPTIONS")) {
+                callbacks.printOutput("GET/HEAD/OPTIONS请求不支持");
                 continue;
             }
             
@@ -73,11 +78,12 @@ public class ParameterCalculator {
             byte[] bodyBytes = Arrays.copyOfRange(requestBytes, bodyOffset, requestBytes.length);
             
             if (bodyBytes.length == 0) {
+                callbacks.printOutput("请求体为空");
                 continue;
             }
 
             // 计算参数数量
-            ParameterCounts counts = null;
+            ParameterCounts counts;
 
             try {
                 counts = calculateParameterCounts(requestInfo, bodyBytes);
@@ -87,16 +93,22 @@ public class ParameterCalculator {
             }
 
             if (counts == null){
+                callbacks.printOutput("无法计算参数数量");
                 continue;
             }
 
             
             // 更新请求备注
             String comment = String.format("赋值数量：%d / 参数数量：%d", counts.valuedCount, counts.totalCount);
-            
-            // 将统计结果添加到请求的备注中
-            requestResponse.setComment(comment);
-            
+
+            try {
+                // 将统计结果添加到请求的备注中
+                requestResponse.setComment(comment);
+            }catch (Exception e){
+                callbacks.printError("无法更新请求备注：" + e.getMessage());
+                continue;
+            }
+
             // 输出日志
             callbacks.printOutput("------------------------------");
             callbacks.printOutput("URL: " + requestInfo.getUrl().toString());
@@ -117,9 +129,25 @@ public class ParameterCalculator {
      * @return 参数计数结果
      */
     private ParameterCounts calculateParameterCounts(IRequestInfo requestInfo, byte[] bodyBytes) {
+        if (bodyBytes == null || bodyBytes.length == 0){
+            callbacks.printOutput("请求体为空");
+            return new ParameterCounts(0, 0);
+        }
+
         // 获取请求体内容
-        String bodyString = new String(bodyBytes);
-        
+        String bodyString;
+
+        try {
+            bodyString = new String(bodyBytes, StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            callbacks.printOutput("无法解析请求体");
+            return new ParameterCounts(0, 0);
+        }
+
+        if (bodyString.trim().isEmpty()){
+            return new ParameterCounts(0, 0);
+        }
+
         // 获取Content-Type头
         Map<String, String> headers = getRequestHeaders(requestInfo);
         String contentType = headers.get("content-type");
@@ -132,18 +160,18 @@ public class ParameterCalculator {
                 // 处理表单提交
                 return FormParameterProcessor.calculateFormParameters(bodyString);
             } else if (contentType.contains("multipart/form-data")) {
-                // 处理multipart/form-data格式请求
-                return MultipartFormDataProcessor.calculateMultipartParameters(bodyString, contentType);
+                // 处理multipart/form-data格式请求，直接使用字节数组
+                return MultipartFormDataProcessor.calculateMultipartParameters(bodyBytes, contentType);
             } else if (contentType.contains("application/xml") || contentType.contains("text/xml")) {
                 // 处理XML请求
                 return XmlParameterProcessor.calculateXmlParameters(bodyString);
             } else {
                 // 对于其他格式，尝试通用方法
-                return GenericParameterProcessor.calculateGenericParameters(bodyString);
+                return GenericParameterProcessor.calculateGenericParameters(bodyBytes);
             }
         } else {
             // 无Content-Type头，尝试通用方法
-            return GenericParameterProcessor.calculateGenericParameters(bodyString);
+            return GenericParameterProcessor.calculateGenericParameters(bodyBytes);
         }
     }
     

@@ -13,20 +13,18 @@ public class JsonParameterProcessor {
      * @return 参数计数结果
      */
     public static ParameterCounts calculateJsonParameters(String jsonBody) {
-        int totalCount = 0;
-        int valuedCount = 0;
+        int totalCount;
+        int valuedCount;
         
         if (jsonBody.trim().isEmpty()) {
             return new ParameterCounts(0, 0);
         }
         
         // 计数键值对
-        int keyValuePairs = countJSONKeyValuePairs(jsonBody);
-        totalCount = keyValuePairs;
+        totalCount = countJSONKeyValuePairs(jsonBody);
         
         // 计数非空值
-        int nonEmptyValues = countJSONNonEmptyValues(jsonBody);
-        valuedCount = nonEmptyValues;
+        valuedCount = countJSONNonEmptyValues(jsonBody);
         
         return new ParameterCounts(totalCount, valuedCount);
     }

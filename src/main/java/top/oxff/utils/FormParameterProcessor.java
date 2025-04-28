@@ -13,7 +13,7 @@ public class FormParameterProcessor {
      * @return 参数计数结果
      */
     public static ParameterCounts calculateFormParameters(String bodyString) {
-        int totalCount = 0;
+        int totalCount;
         int valuedCount = 0;
         
         if (bodyString.trim().isEmpty()) {
