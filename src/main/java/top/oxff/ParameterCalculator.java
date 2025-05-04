@@ -4,12 +4,7 @@ import burp.BurpExtender;
 import burp.IBurpExtenderCallbacks;
 import burp.IHttpRequestResponse;
 import burp.IRequestInfo;
-
-import top.oxff.utils.FormParameterProcessor;
-import top.oxff.utils.GetParameterProcessor;
-import top.oxff.utils.JsonParameterProcessor;
-import top.oxff.utils.MultipartFormDataProcessor;
-import top.oxff.utils.XmlParameterProcessor;
+import top.oxff.utils.*;
 
 import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
@@ -17,15 +12,12 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * 参数计算器类，用于计算HTTP请求中的参数数量
- */
 public class ParameterCalculator {
 
     private final IBurpExtenderCallbacks callbacks;
@@ -44,7 +36,7 @@ public class ParameterCalculator {
         this.stderr = BurpExtender.getStderr();
         initThreadPool();
     }
-    
+
     /**
      * 初始化线程池
      */
@@ -60,6 +52,7 @@ public class ParameterCalculator {
 
     /**
      * 处理请求列表，计算参数数量并更新备注
+     *
      * @param httpRequestResponses 要处理的请求响应数组
      */
     public void processRequests(IHttpRequestResponse[] httpRequestResponses) {
@@ -67,7 +60,7 @@ public class ParameterCalculator {
             stdout.println("没有请求");
             return;
         }
-        
+
         // 如果请求数量太多，则需要关闭旧线程池创建新的
         if (httpRequestResponses.length > 500) {
             shutdownThreadPool();
@@ -76,42 +69,42 @@ public class ParameterCalculator {
 
         final AtomicInteger processedCount = new AtomicInteger(0);
         final AtomicInteger successCount = new AtomicInteger(0);
-        
+
         // 记录开始时间
         long startTime = System.currentTimeMillis();
         stdout.println("开始处理 " + httpRequestResponses.length + " 个请求...");
-        
+
         // 分批处理请求
         for (int batchStart = 0; batchStart < httpRequestResponses.length; batchStart += BATCH_SIZE) {
             int batchEnd = Math.min(batchStart + BATCH_SIZE, httpRequestResponses.length);
             int batchSize = batchEnd - batchStart;
-            
+
             if (LOG_LEVEL <= 1) {
-                stdout.println("处理批次 " + (batchStart / BATCH_SIZE + 1) + 
-                      "，范围: " + (batchStart + 1) + "-" + batchEnd + 
-                      "，共 " + batchSize + " 个请求");
+                stdout.println("处理批次 " + (batchStart / BATCH_SIZE + 1) +
+                        "，范围: " + (batchStart + 1) + "-" + batchEnd +
+                        "，共 " + batchSize + " 个请求");
             }
-            
+
             final CountDownLatch batchLatch = new CountDownLatch(batchSize);
-            
+
             // 提交当前批次的请求到线程池
             for (int i = batchStart; i < batchEnd; i++) {
                 final IHttpRequestResponse requestResponse = httpRequestResponses[i];
                 final int requestIndex = i;
-                
+
                 threadPool.submit(() -> {
                     try {
                         if (processRequest(requestResponse, requestIndex, httpRequestResponses.length)) {
                             successCount.incrementAndGet();
                         }
                         processedCount.incrementAndGet();
-                        
+
                         // 每处理50个请求更新一次进度
                         int processed = processedCount.get();
                         if (processed % 50 == 0 || processed == httpRequestResponses.length) {
                             double percent = (double) processed / httpRequestResponses.length * 100;
-                            final String progressMsg = String.format("进度: %.1f%% (%d/%d)", 
-                                percent, processed, httpRequestResponses.length);
+                            final String progressMsg = String.format("进度: %.1f%% (%d/%d)",
+                                    percent, processed, httpRequestResponses.length);
                             synchronized (stdout) {
                                 stdout.println(progressMsg);
                             }
@@ -125,7 +118,7 @@ public class ParameterCalculator {
                     }
                 });
             }
-            
+
             try {
                 // 等待当前批次完成，最多等待30秒
                 boolean completed = batchLatch.await(30, TimeUnit.SECONDS);
@@ -136,7 +129,7 @@ public class ParameterCalculator {
                 stderr.println("等待批次完成时被中断: " + e.getMessage());
                 Thread.currentThread().interrupt();
             }
-            
+
             // 给UI线程喘息的机会
             try {
                 Thread.sleep(100);
@@ -144,16 +137,16 @@ public class ParameterCalculator {
                 Thread.currentThread().interrupt();
             }
         }
-        
+
         // 计算耗时
         long endTime = System.currentTimeMillis();
         double timeInSeconds = (endTime - startTime) / 1000.0;
-        
+
         // 汇总处理结果
-        stdout.println("处理完成! 共处理了 " + processedCount.get() + " 个请求，成功 " + 
+        stdout.println("处理完成! 共处理了 " + processedCount.get() + " 个请求，成功 " +
                 successCount.get() + " 个，耗时: " + timeInSeconds + " 秒");
     }
-    
+
     /**
      * 关闭线程池
      */
@@ -171,12 +164,13 @@ public class ParameterCalculator {
             }
         }
     }
-    
+
     /**
      * 处理单个请求
+     *
      * @param requestResponse 请求响应对象
-     * @param index 请求在数组中的索引
-     * @param total 总请求数
+     * @param index           请求在数组中的索引
+     * @param total           总请求数
      * @return 是否成功处理
      */
     private boolean processRequest(IHttpRequestResponse requestResponse, int index, int total) {
@@ -190,7 +184,7 @@ public class ParameterCalculator {
         }
 
         byte[] requestBytes = requestResponse.getRequest();
-        
+
         // 跳过null请求
         if (requestBytes == null || requestBytes.length == 0) {
             if (LOG_LEVEL <= 1) {
@@ -215,6 +209,16 @@ public class ParameterCalculator {
         }
 
         if (requestInfo == null) {
+            String comment = "请求信息为空";
+
+            try {
+                requestResponse.setComment(comment);
+            } catch (Exception e) {
+                if (LOG_LEVEL <= 1) {
+                    stderr.println("无法设置注释 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                }
+            }
+
             if (LOG_LEVEL <= 1) {
                 synchronized (stdout) {
                     stdout.println("请求为空 [" + (index + 1) + "/" + total + "]");
@@ -225,7 +229,7 @@ public class ParameterCalculator {
 
         // 获取请求方法
         String method = requestInfo.getMethod();
-        
+
         // 计算参数数量
         ParameterCounts counts;
 
@@ -234,20 +238,23 @@ public class ParameterCalculator {
                 // GET请求使用专门的处理器处理URL参数
                 counts = GetParameterProcessor.calculateGetParameters(requestInfo.getUrl());
             } else {
-                // 对于POST等其他请求，继续处理请求体
+                // 对于POST等其他请求，处理请求体或URL参数
                 int bodyOffset = requestInfo.getBodyOffset();
                 byte[] bodyBytes = Arrays.copyOfRange(requestBytes, bodyOffset, requestBytes.length);
-                
+
                 if (bodyBytes.length == 0) {
+                    // 请求体为空，但URL可能包含参数，计算URL参数
                     if (LOG_LEVEL <= 1) {
                         synchronized (stdout) {
-                            stdout.println("请求体为空 [" + (index + 1) + "/" + total + "]");
+                            stdout.println("请求体为空，尝试从URL获取参数 [" + (index + 1) + "/" + total + "]");
                         }
                     }
-                    return false;
+                    // Calculate parameters from URL
+                    counts = GetParameterProcessor.calculateGetParameters(requestInfo.getUrl());
+                } else {
+                    // 请求体不为空，计算请求体参数
+                    counts = calculateParameterCounts(requestInfo, bodyBytes);
                 }
-                
-                counts = calculateParameterCounts(requestInfo, bodyBytes);
             }
         } catch (Exception e) {
             if (LOG_LEVEL <= 1) {
@@ -264,10 +271,23 @@ public class ParameterCalculator {
                     stdout.println("无法计算参数数量 [" + (index + 1) + "/" + total + "]");
                 }
             }
+
+            String comment = "无法计算参数数量";
+
+            try {
+                requestResponse.setComment(comment);
+            } catch (Exception e) {
+                if (LOG_LEVEL <= 1) {
+                    synchronized (stderr) {
+                        stderr.println("无法更新请求备注 [" + (index + 1) + "/" + total + "]: " + e.getMessage());
+                    }
+                }
+            }
+
             return false;
         }
 
-        
+
         // 更新请求备注
         String comment = String.format("赋值数量：%d / 参数数量：%d", counts.valuedCount, counts.totalCount);
 
@@ -293,70 +313,81 @@ public class ParameterCalculator {
                 stdout.println("------------------------------");
             }
         }
-            
+
         return true;
     }
 
     /**
      * 计算HTTP请求中的参数数量
+     *
      * @param requestInfo 请求信息
-     * @param bodyBytes 请求体字节数组
+     * @param bodyBytes   请求体字节数组
      * @return 参数计数结果
      */
     private ParameterCounts calculateParameterCounts(IRequestInfo requestInfo, byte[] bodyBytes) {
-        if (bodyBytes == null || bodyBytes.length == 0){
+        if (bodyBytes == null || bodyBytes.length == 0) {
             return new ParameterCounts(0, 0);
         }
 
-        // 获取请求体内容
-        String bodyString;
-
-        try {
-            bodyString = new String(bodyBytes, StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            return new ParameterCounts(0, 0);
-        }
-
-        if (bodyString.trim().isEmpty()){
-            return new ParameterCounts(0, 0);
-        }
 
         // 获取Content-Type头
         Map<String, String> headers = getRequestHeaders(requestInfo);
         String contentType = headers.get("content-type");
-        
+
         if (contentType != null) {
-            if (contentType.contains("application/json")) {
-                // 处理JSON请求体
-                return JsonParameterProcessor.calculateJsonParameters(bodyString);
-            } else if (contentType.contains("application/x-www-form-urlencoded")) {
-                // 处理表单提交
-                return FormParameterProcessor.calculateFormParameters(bodyString);
-            } else if (contentType.contains("multipart/form-data")) {
+            if (contentType.contains("multipart/form-data")) {
                 // 处理multipart/form-data格式请求，直接使用字节数组
                 return MultipartFormDataProcessor.calculateMultipartParameters(bodyBytes, contentType);
-            } else if (contentType.contains("application/xml") || contentType.contains("text/xml")) {
-                // 处理XML请求
-                return XmlParameterProcessor.calculateXmlParameters(bodyString);
             } else {
-                // 对于其他格式，尝试通用方法
-                return GenericParameterProcessor.calculateGenericParameters(bodyBytes);
+                // 获取请求体内容
+                String bodyString;
+
+                try {
+                    bodyString = new String(bodyBytes, StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    if (LOG_LEVEL <= 1){
+                        synchronized (stderr) {
+                            stderr.println("无法解析请求体: " + e.getMessage());
+                        }
+                    }
+
+                    return new ParameterCounts(0, 0);
+                }
+
+                if (bodyString.trim().isEmpty()) {
+                    return new ParameterCounts(0, 0);
+                }
+
+                if (contentType.contains("application/json")) {
+                    // 处理JSON请求体
+                    return JsonParameterProcessor.calculateJsonParameters(bodyString);
+                } else if (contentType.contains("application/x-www-form-urlencoded")) {
+                    // 处理表单提交
+                    return FormParameterProcessor.calculateFormParameters(bodyString);
+                } else if (contentType.contains("application/xml") || contentType.contains("text/xml")) {
+                    // 处理XML请求
+                    return XmlParameterProcessor.calculateXmlParameters(bodyString);
+                } else {
+                    // 对于其他格式，尝试通用方法
+                    return GenericParameterProcessor.calculateGenericParameters(bodyBytes);
+                }
             }
         } else {
             // 无Content-Type头，尝试通用方法
             return GenericParameterProcessor.calculateGenericParameters(bodyBytes);
         }
     }
-    
+
     /**
      * 解析请求头
+     *
      * @param requestInfo 请求信息
      * @return 请求头键值对映射
      */
     private Map<String, String> getRequestHeaders(IRequestInfo requestInfo) {
         Map<String, String> headerMap = new HashMap<>();
         List<String> headers = requestInfo.getHeaders();
-        
+
         // 跳过第一行（HTTP请求行）
         for (int i = 1; i < headers.size(); i++) {
             String header = headers.get(i);
@@ -367,7 +398,33 @@ public class ParameterCalculator {
                 headerMap.put(name, value);
             }
         }
-        
+
         return headerMap;
     }
-} 
+
+    /**
+     * 示例方法：处理 multipart/form-data 请求并打印解析结果
+     *
+     * @param bodyBytes   请求体字节数组
+     * @param contentType Content-Type头值
+     */
+    public static void processAndPrintMultipartData(byte[] bodyBytes, String contentType) {
+        MultipartResult result = MultipartFormDataProcessor.processMultipartData(bodyBytes, contentType);
+
+        System.out.println("所有字段数量: " + result.getAllParts().size());
+        System.out.println("文本字段数量: " + result.getTextParts().size());
+        System.out.println("文件字段数量: " + result.getFileParts().size());
+
+        // 打印文本字段
+        System.out.println("\n文本字段:");
+        for (FormPart part : result.getTextParts()) {
+            System.out.println("  " + part.getName() + ": " + part.getTextValue());
+        }
+
+        // 打印文件字段
+        System.out.println("\n文件字段:");
+        for (FormPart part : result.getFileParts()) {
+            System.out.println("  " + part.getName() + " (文件名: " + part.getFilename() + ", 大小: " + part.getContent().length + " bytes)");
+        }
+    }
+}
